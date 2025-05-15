@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
 
+import 'package:stellar_flutter_sdk/stellar_flutter_sdk.dart';
+
 void main() {
   runApp(const DeliveryPaymentApp());
 }
@@ -94,22 +96,113 @@ class _DeliveryScreenState extends State<DeliveryScreen> {
     });
   }
 
-  void triggerPayment() {
-    // Simulate payment trigger to Stellar
-    // In real app, this would call the Stellar SDK and smart contract
-    Future.delayed(const Duration(seconds: 1), () {
+  // Add these to your class variables
+  final StellarSDK sdk = StellarSDK.TESTNET; // Use .PUBLIC for mainnet
+  final Network network = Network.TESTNET; // Use .PUBLIC for mainnet
+  String? transactionHash;
+
+  Future<void> triggerPayment() async {
+    setState(() {
+      // Set status to "Processing Payment"
+      status = "Processing Payment";
+    });
+
+    try {
+      final sdk = StellarSDK.TESTNET; // Or .PUBLIC for mainnet
+      final network = Network.TESTNET; // Or .PUBLIC for mainnet
+
+      // Get payer's keypair (in a real app, this would be securely stored or retrieved)
+      // Here we're assuming you have a way to get the private key
+      final payerKeypair = KeyPair.fromSecretSeed(
+        "YOUR_SECRET_SEED",
+      ); // Replace with actual seed or secure retrieval
+
+      // Get account details for the latest sequence number
+      final payerAccount = await sdk.accounts.account(payerKeypair.accountId);
+
+      // Create the asset object correctly
+      final Asset paymentAsset =
+          assetCode == "XLM"
+              ? Asset.NATIVE
+              : Asset.createNonNativeAsset(assetCode, payerKeypair.accountId);
+
+      // Use the proper builder pattern to create the payment operation
+      final paymentOperation =
+          PaymentOperationBuilder(
+            shipperAccount, // Destination account ID
+            paymentAsset, // Asset to send
+            assetAmount, // Amount to send
+          ).setSourceAccount(payerKeypair.accountId).build();
+
+      // Build the transaction
+      final transactionBuilder =
+          TransactionBuilder(payerAccount)
+            // Add the payment operation
+            ..addOperation(paymentOperation)
+            // Add a memo if needed
+            ..addMemo(Memo.text("Package delivery payment"));
+      // Set timeout for the transaction
+      // ..setTimeout(30);
+
+      // Build and sign the transaction
+      final transaction = transactionBuilder.build();
+      transaction.sign(payerKeypair, network);
+
+      // Submit the transaction to the network
+      final response = await sdk.submitTransaction(transaction);
+
+      if (response.success) {
+        // Transaction was successful
+        setState(() {
+          paymentSent = true;
+          status = "Delivered & Paid";
+          transactionHash = response.hash;
+        });
+
+        // Show payment confirmation with actual transaction hash
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Payment of $assetAmount $assetCode sent to shipper!',
+            ),
+            duration: const Duration(seconds: 3),
+            action: SnackBarAction(
+              label: 'View TX',
+              onPressed: () {
+                // Here you could open a browser to the Stellar Explorer with the TX hash
+                // launchUrl(Uri.parse('https://stellar.expert/explorer/testnet/tx/${response.hash}'));
+              },
+            ),
+          ),
+        );
+      } else {
+        // Handle transaction failure
+        setState(() {
+          status = "Delivered - Payment Failed";
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Payment failed: ${response ?? "Unknown error"}'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
+    } catch (e) {
+      // Handle any exceptions
       setState(() {
-        paymentSent = true;
+        status = "Delivered - Payment Error";
       });
 
-      // Show payment confirmation
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Payment of $assetAmount $assetCode sent to shipper!'),
-          duration: const Duration(seconds: 3),
+          content: Text('Error making payment: ${e.toString()}'),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 5),
         ),
       );
-    });
+    }
   }
 
   @override
